@@ -1,6 +1,8 @@
 ## rmdns
 
-Rust mDNS library, with Querier (client) and Responsder (server).
+Rust mDNS library, with Querier (client) and Responder (server).
+
+**Only for Prototype ** now.
 
 ### Usage
 
@@ -19,4 +21,4 @@ see console outputs.
 
 ### Explanation 
 
-Now, client send a DNS packet every 5 seconds.
+Now, client sends a DNS packet by every 5 seconds.
