@@ -41,9 +41,36 @@ struct Responder {
 impl Responder {
 
     pub fn new() -> Result<Self, io::Error> {
+        let interfaces = match get_if_addrs() {
+            Ok(ifcs) => ifcs,
+                Err(err) => {
+                    error!("could not get list of interfaces: {}", err);
+                    return Err(io::Error::new(io::ErrorKind::Other, "get intefaces error"));
+                }
+        };
+
+        let mut iface_addr: Option<Ipv4Addr> = None;
+        for iface in interfaces {
+            if iface.is_loopback() {
+                continue;
+            }
+
+            match iface.ip() {
+                IpAddr::V4(ip) => {
+                    if ip.to_string().starts_with("192") {
+                        iface_addr = Some(ip);
+                    }
+                },
+                    _ => (),
+            }
+        }
+
+
+
         // bind local address and port
         // reuse them
-        let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
+        //let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
+        let iface_addr = iface_addr.unwrap(); 
         let multicast_addr = Ipv4Addr::new(224, 0, 0, 251); 
 
         let socket = net2::UdpBuilder::new_v4()?
@@ -55,7 +82,7 @@ impl Responder {
         // XXX: using Handle::default()?
         let socket = UdpSocket::from_std(socket, &Handle::default())?;
 
-        socket.set_multicast_loop_v4(true)?;
+        socket.set_multicast_loop_v4(false)?;
         socket.set_multicast_ttl_v4(255)?;
         socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
 
@@ -168,10 +195,10 @@ impl Future for Responder {
             self.received_from = Some(try_ready!(self.socket.poll_recv_from(&mut self.buf)));
 
             if let Some((size, peer)) = self.received_from {
-                println!("{:?}", str::from_utf8(&self.buf[..size]));
+                //println!("{:?}", &self.buf[..size]);
                 // handle packet
                 if let Some((response, addr)) = self.handle_packet(&self.buf[..size], peer) {
-                    println!("{:?}, {}", str::from_utf8(&response), addr);
+                    //println!("{:?}, {}", &response, addr);
                     
                     // send it to multicase address
                     // TODO: according to rfc, we should wait random 20ms~120ms here before sending

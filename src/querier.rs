@@ -50,16 +50,15 @@ struct Respond {
 impl Querier {
 
     fn new(service_name: &str) -> Result<Self, io::Error> {
-
-        /*
         let interfaces = match get_if_addrs() {
             Ok(ifcs) => ifcs,
                 Err(err) => {
                     error!("could not get list of interfaces: {}", err);
-                    return builder;
+                    return Err(io::Error::new(io::ErrorKind::Other, "get intefaces error"));
                 }
         };
 
+        let mut iface_addr: Option<Ipv4Addr> = None;
         for iface in interfaces {
             if iface.is_loopback() {
                 continue;
@@ -67,15 +66,17 @@ impl Querier {
 
             match iface.ip() {
                 IpAddr::V4(ip) => {
-                    ip
+                    if ip.to_string().starts_with("192") {
+                       iface_addr = Some(ip); 
+                    }
                 },
                 _ => (),
             }
         }
-        */
 
         // only form mvp
-        let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
+        //let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
+        let iface_addr = iface_addr.unwrap(); 
         let multicast_addr = Ipv4Addr::new(224, 0, 0, 251); 
 
         let socket = net2::UdpBuilder::new_v4()?
@@ -87,7 +88,7 @@ impl Querier {
         // XXX: using Handle::default()?
         let socket = UdpSocket::from_std(socket, &Handle::default())?;
 
-        socket.set_multicast_loop_v4(true)?;
+        socket.set_multicast_loop_v4(false)?;
         socket.set_multicast_ttl_v4(255)?;
         socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
 
@@ -149,7 +150,7 @@ impl Respond {
         // XXX: using Handle::default()?
         let socket = UdpSocket::from_std(socket, &Handle::default())?;
 
-        socket.set_multicast_loop_v4(true)?;
+        socket.set_multicast_loop_v4(false)?;
         socket.set_multicast_ttl_v4(255)?;
         socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
 
