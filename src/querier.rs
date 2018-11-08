@@ -8,7 +8,7 @@ use log::{
 use std::{env, io};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
-use std::collections::VecDeque;
+use std::collections::HashMap;
 
 use tokio::prelude::*;
 use tokio::net::UdpSocket;
@@ -29,6 +29,8 @@ use dns_parser::{
     RRData
 };
 
+use std::str;
+
 pub type AnswerBuilder = DP_Builder<Answers>;
 
 const DEFAULT_TTL: u32 = 255;
@@ -41,7 +43,7 @@ struct Querier {
 struct Respond {
     socket: UdpSocket,
     buf: Vec<u8>,
-//    responses: VecDeque<Response>,
+    ips: HashMap<IpAddr, usize>,
 }
 
 
@@ -87,7 +89,7 @@ impl Querier {
 
         socket.set_multicast_loop_v4(true)?;
         socket.set_multicast_ttl_v4(255)?;
-        socket.join_multicast_v4(&multicast_addr, &iface_addr);
+        socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
 
         Ok(Self {
             service_name: service_name.to_string(),
@@ -149,21 +151,30 @@ impl Respond {
 
         socket.set_multicast_loop_v4(true)?;
         socket.set_multicast_ttl_v4(255)?;
-        socket.join_multicast_v4(&multicast_addr, &iface_addr);
+        socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
 
         Ok(Self {
             socket: socket,
             buf: vec![0; 4096],
-            //responses: VecDeque::new(),
+            ips: HashMap::new(),
         })
 
 
     }
 
-    //fn parse_response(buf: &[u8]) -> Result<Vec<Response>, io::Error> {
-    //    
-    //
-    //}
+    /*
+    fn parse_response(&self, buf: &[u8]) -> Result<Packet, io::Error> {
+        let raw_packet = match Packet::parse(&buf) {
+            Ok(raw_packet) => raw_packet,
+            Err(e) => {
+                return Err(io::Error::new(io::ErrorKind::Other, "parsing packet error"))
+            }
+            
+        };
+
+        Ok(raw_packet)
+    }
+    */
 
 
 }
@@ -178,7 +189,18 @@ impl Future for Respond {
             // receive response from
             let (size, peer) = try_ready!(self.socket.poll_recv_from(&mut self.buf));
 
-            println!("{:?}", &self.buf[..size]);
+            let raw_packet: Option<Packet> = match Packet::parse(&self.buf[..size]) {
+                Ok(raw_packet) => Some(raw_packet),
+                Err(e) => {
+                    //return Err(io::Error::new(io::ErrorKind::Other, "parsing packet error"))
+                    None
+                }
+            };
+            println!("{:?}, {}", raw_packet, peer);
+
+            self.ips.entry(peer.ip()).or_insert(1);
+
+            println!("{:?}", self.ips);
             // handle packet
             //if  = self.parse_response(&self.buf[..size]) {
             //    println!("{:?}, {}", response, addr);
@@ -197,7 +219,7 @@ fn main() {
     let query_task = Interval::new(Instant::now(), Duration::from_secs(5))
         .for_each(move |instant| {
             println!("fire; instant={:?}", instant);
-            querier.query();
+            querier.query().unwrap();
 
             Ok(())
         })

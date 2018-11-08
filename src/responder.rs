@@ -10,6 +10,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::prelude::*;
 use tokio::net::UdpSocket;
+use tokio::reactor::Handle;
+
+use net2::unix::UnixUdpBuilderExt;
 
 use get_if_addrs::get_if_addrs;
 use dns_parser::{
@@ -23,6 +26,8 @@ use dns_parser::{
     RRData
 };
 
+use std::str;
+
 pub type AnswerBuilder = DP_Builder<Answers>;
 
 const DEFAULT_TTL: u32 = 255;
@@ -34,6 +39,37 @@ struct Responder {
 }
 
 impl Responder {
+
+    pub fn new() -> Result<Self, io::Error> {
+        // bind local address and port
+        // reuse them
+        let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
+        let multicast_addr = Ipv4Addr::new(224, 0, 0, 251); 
+
+        let socket = net2::UdpBuilder::new_v4()?
+            .reuse_address(true)?
+                        .reuse_port(true)?
+                        .bind(("0.0.0.0", 5353))?;
+        println!("Listening on: {}", socket.local_addr().unwrap());
+
+        // XXX: using Handle::default()?
+        let socket = UdpSocket::from_std(socket, &Handle::default())?;
+
+        socket.set_multicast_loop_v4(true)?;
+        socket.set_multicast_ttl_v4(255)?;
+        socket.join_multicast_v4(&multicast_addr, &iface_addr)?;
+
+        Ok(Self {
+            socket: socket,
+            buf: vec![0; 4096],
+            received_from: None,
+            //responses: VecDeque::new(),
+        })
+
+
+    }
+
+
     fn handle_packet(&self, buf: &[u8], addr: SocketAddr) -> Option<(Vec<u8>, SocketAddr)> {
         let packet = match Packet::parse(buf) {
             Ok(packet) => packet,
@@ -132,10 +168,10 @@ impl Future for Responder {
             self.received_from = Some(try_ready!(self.socket.poll_recv_from(&mut self.buf)));
 
             if let Some((size, peer)) = self.received_from {
-                println!("{:?}", &self.buf[..size]);
+                println!("{:?}", str::from_utf8(&self.buf[..size]));
                 // handle packet
                 if let Some((response, addr)) = self.handle_packet(&self.buf[..size], peer) {
-                    println!("{:?}, {}", response, addr);
+                    println!("{:?}, {}", str::from_utf8(&response), addr);
                     
                     // send it to multicase address
                     // TODO: according to rfc, we should wait random 20ms~120ms here before sending
@@ -153,17 +189,7 @@ fn main() {
     // create local binding 
     // XXX: should reuse local address and port
     //      and add to multicase group
-    let addr = env::args().nth(1).unwrap_or("0.0.0.0:5353".to_string());
-    let addr = addr.parse::<SocketAddr>().unwrap();
-
-    let socket = UdpSocket::bind(&addr).unwrap();
-    println!("Listening on: {}", socket.local_addr().unwrap());
-
-    let responder = Responder {
-        socket: socket,
-        buf: vec![0; 4096],
-        received_from: None,
-    };
+    let responder = Responder::new().unwrap();
 
     tokio::run(responder.map_err(|e| println!("server error = {:?}", e)));
 }
