@@ -36,14 +36,9 @@ const DEFAULT_TTL: u32 = 255;
 struct Querier {
     service_name: String,
     socket: UdpSocket,
-}
-
-struct Respond {
-    socket: UdpSocket,
     buf: Vec<u8>,
 //    responses: VecDeque<Response>,
 }
-
 
 impl Querier {
 
@@ -82,7 +77,6 @@ impl Querier {
                         .bind(("0.0.0.0", 5353))?;
         println!("Listening on: {}", socket.local_addr().unwrap());
 
-        // XXX: using Handle::default()?
         let socket = UdpSocket::from_std(socket, &Handle::default())?;
 
         socket.set_multicast_loop_v4(true)?;
@@ -92,13 +86,14 @@ impl Querier {
         Ok(Self {
             service_name: service_name.to_string(),
             socket: socket,
+            buf: vec![0; 4096],
             //responses: VecDeque::new(),
         })
     }
 
-    fn build_packet_and_multicast_addr(&self, service_name: String) -> (Vec<u8>, SocketAddr) {
-        let builder = DP_Builder::new_query(0, false);
-        let builder = builder.add_question(
+    fn build_packet_and_addr(&self, service_name: &'static str) -> (Vec<u8>, SocketAddr) {
+        let mut builder = DP_Builder::new_query(0, false);
+        builder.add_question(
             &Name::from_str(service_name).unwrap(),
             QueryType::A,
             QueryClass::IN);
@@ -109,66 +104,15 @@ impl Querier {
         (packet_data, addr)
     }
 
-    fn send(&mut self, packet: &[u8], addr: &SocketAddr) -> Result<Async<usize>, io::Error> {
-        self.socket.poll_send_to(&packet, &addr)
-    }
-
-    fn query(&mut self) -> Result<(), io::Error>{
-
-        // construct dns packet
-        let (packet, addr) = self.build_packet_and_multicast_addr(self.service_name.clone());
-        //let sent_size = try_ready!(querier.socket.poll_send_to(&packet, &addr));
-        let sent_size = match self.send(&packet, &addr)? {
-            Async::Ready(size) => size,
-            Async::NotReady => return Ok(())
-        };
-        println!("Sent {} bytes to {}", sent_size, &addr);
-        
-        Ok(())
-    }
-
-}
-
-
-impl Respond {
-    
-    pub fn new() -> Result<Self, io::Error> {
-        // bind local address and port
-        // reuse them
-        let iface_addr = Ipv4Addr::new(192, 168, 8, 117); 
-        let multicast_addr = Ipv4Addr::new(224, 0, 0, 251); 
-
-        let socket = net2::UdpBuilder::new_v4()?
-            .reuse_address(true)?
-                        .reuse_port(true)?
-                        .bind(("0.0.0.0", 5353))?;
-        println!("Listening on: {}", socket.local_addr().unwrap());
-
-        // XXX: using Handle::default()?
-        let socket = UdpSocket::from_std(socket, &Handle::default())?;
-
-        socket.set_multicast_loop_v4(true)?;
-        socket.set_multicast_ttl_v4(255)?;
-        socket.join_multicast_v4(&multicast_addr, &iface_addr);
-
-        Ok(Self {
-            socket: socket,
-            buf: vec![0; 4096],
-            //responses: VecDeque::new(),
-        })
-
-
-    }
-
     //fn parse_response(buf: &[u8]) -> Result<Vec<Response>, io::Error> {
     //    
     //
     //}
 
-
 }
 
-impl Future for Respond {
+
+impl Future for Querier {
     type Item = ();
     type Error = io::Error;
 
@@ -190,26 +134,26 @@ impl Future for Respond {
 fn main() {
 
     let service_name = "_cita.tcp.local";
-    let mut querier = Querier::new(service_name).unwrap();
+    let querier = Querier::new(service_name).unwrap();
 
     // interval send dns packet
     // 
-    let query_task = Interval::new(Instant::now(), Duration::from_secs(5))
-        .for_each(move |instant| {
+    let interval_task = Interval::new(Instant::now(), Duration::from_secs(5))
+        //.take(10)
+        .for_each(|instant| {
             println!("fire; instant={:?}", instant);
-            querier.query();
+            // construct dns packet
+            let (packet, addr) = querier.build_packet_and_addr(service_name);
+            let sent_size = try_ready!(querier.socket.poll_send_to(&packet, &addr));
+            println!("Sent {} bytes to {}", sent_size, &addr);
 
             Ok(())
         })
-        .map_err(|e| panic!("interval errored; err={:?}", e));
+    .map_err(|e| panic!("interval errored; err={:?}", e));
 
-    // respond polling tasks
-    let respond_task = Respond::new().unwrap();
+    let combined_tasks = querier.join(interval_task);
 
-    // combine them with join
-    let tasks = respond_task.join(query_task).and_then(|_|{ Ok(()) });
+    tokio::run(combined_tasks.map_err(|e| println!("server error = {:?}", e)));
 
-    // start event loop
-    tokio::run(tasks.map_err(|e| println!("server error = {:?}", e)));
 }
 

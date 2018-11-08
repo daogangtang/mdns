@@ -1,7 +1,25 @@
 [package]
-name = "rmdns"
+name = "mdns"
 version = "0.1.0"
 authors = ["Mike Tang <daogangtang@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+futures = "*"
+tokio = "*"
+get_if_addrs = "*"
+log = "*"
+dns-parser = { git = "https://github.com/plietar/dns-parser" }
+net2 = "*"
+
+[dev-dependencies]
+env_logger = "*"
+
+
+[[bin]]
+name = "querier"
+path = "src/querier.rs"
+
+[[bin]]
+name = "responder"
+path = "src/responder.rs"
